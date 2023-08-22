@@ -1,0 +1,176 @@
+library(survival)
+library(survminer)
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+# Download gene expression data and clinical information for your specified cancer type (e.g., HCC) using the "GDCquery" function. Replace "your_cancer_type" with the appropriate TCGA cancer abbreviation.
+query <- GDCquery(project = "TCGA-LIHC",
+                  data.category = "Transcriptome Profiling",
+                  data.type = "Gene Expression Quantification",
+                  workflow.type = "STAR - Counts")
+
+GDCdownload(query,directory = "TCGA")
+
+clinical <- GDCquery_clinic(project = "TCGA-LIHC", type = "clinical")
+
+##load and prepare data
+#load and preprocess gene express gene expression data and clinical data
+gene_expression <- GDCprepare(query, save = TRUE, save.filename = "data_READ.rda",directory = "TCGA")
+
+ensembl_ids <- rownames(gene_expression)
+ensembl_ids <- sub("\\..*", "", rownames(gene_expression)) 
+gene_info <- select(org.Hs.eg.db, keys = ensembl_ids, columns = c("SYMBOL"), keytype = "ENSEMBL")
+ensembl_to_symbol <- setNames(gene_info$SYMBOL, gene_info$ENSEMBL)
+rownames(gene_expression) <- sapply(ensembl_ids, function(id) ensembl_to_symbol[[id]])
+
+
+###normalization
+count_matrix <- assay(gene_expression)
+duplicate_rows <- duplicated(rownames(count_matrix))
+count_matrix_unique <- count_matrix[!duplicate_rows, ]
+
+missing_row_names <- is.na(rownames(count_matrix_unique))
+rows_with_missing <- rownames(count_matrix_unique)[missing_row_names]
+count_matrix_filtered <- count_matrix_unique[!missing_row_names, ]
+dds <- DESeq2::DESeqDataSetFromMatrix(
+  count_matrix_filtered,
+  colData = DataFrame(row.names = colnames(count_matrix_filtered)),
+  design = ~1
+)
+
+dds <- DESeq2::estimateSizeFactors(dds)
+
+gene_expression_norm <- counts(dds, normalized = TRUE)
+
+samplesNT <- TCGAquery_SampleTypes(barcode = colnames(gene_expression_norm),typesample = c("NT"))
+# selection of tumor samples "TP"
+samplesTP <- TCGAquery_SampleTypes(barcode = colnames(gene_expression_norm),typesample = c("TP"))
+
+
+###extract the expression of interesting genes: CDK9 and CD8#####
+cdk9.expression <- gene_expression_norm[c("CDK9"), samplesTP]
+cd8.expression <- gene_expression_norm[c("CD8A"), samplesTP]
+
+exp <- rbind(cdk9.expression, cd8.expression) #merge the expression
+
+##change the sample, corresponds with clinical infor.
+gexp <- exp
+colnames(gexp) <-  sapply(strsplit(colnames(gexp),'-'),function(x) paste0(x[1:3],collapse="-"))
+gexp <- t(gexp)
+gexp <- as.data.frame(gexp)
+gexp$submitter_id <- rownames(gexp)
+
+##combind the clinical data and expression
+#clinical$CDK9 <- gexp[clinical$submitter_id]
+
+clinical.exp <- merge(clinical, gexp, by = "submitter_id", all = T )
+
+df<-subset(clinical.exp,select =c(submitter_id,vital_status,days_to_last_follow_up,days_to_death,
+                                  cdk9.expression, cd8.expression)) #377 patients remain
+df$time <- df$days_to_death
+df$time[which(is.na(df$time))] <- df$days_to_last_follow_up[which(is.na(df$time))]
+df[is.na(df$time), "time"] <- 3675  
+
+df <- df[!is.na(df$cdk9.expression),] ##remove NA
+df <- df[!is.na(df$cd8.expression),] ##remove NA
+
+# five-yeas
+df[df$vital_status=='Dead',]$vital_status <- 2
+df[df$vital_status=='Alive',]$vital_status <- 1
+df[df$time >= 1825, ]$time <- 1825 
+df[df$time == 1825,]$vital_status <- 1
+df$vital_status <- as.numeric(df$vital_status)
+
+
+df$cdk9.hl <- '' 
+df[df$cdk9.expression >= mean(df$cdk9.expression),]$cdk9.hl <- "H"
+df[df$cdk9.expression < mean(df$cdk9.expression),]$cdk9.hl <- "L"
+
+
+df$cd8.hl <- '' 
+df[df$cd8.expression >= mean(df$cd8.expression),]$cd8.hl <- "H"
+df[df$cd8.expression < mean(df$cd8.expression),]$cd8.hl <- "L"
+
+df$com.exp <- ''
+df[df$cdk9.hl == "H" & df$cd8.hl =="H",]$com.exp <- "CDK9high CD8high"
+df[df$cdk9.hl == "L" & df$cd8.hl =="H",]$com.exp <- "CDK9low CD8high"
+df[df$cdk9.hl == "L" & df$cd8.hl =="L",]$com.exp <- "CDK9low CD8low"
+df[df$cdk9.hl == "H" & df$cd8.hl =="L",]$com.exp <- "CDK9high CD8low"
+
+fit <- survfit(Surv(time, vital_status)~com.exp, data=df) 
+# the p value
+
+surv_pvalue(fit)$pval.txt 
+# plot
+ggsurvplot(fit,pval=TRUE,font.legend = c(4,"black"))
+ggsave("./TCGA/CDK9CD8-mean-TCGA_LIHC-survival-day1825.pdf", height = 4.5, width = 4.5)
+
+##CDK9 and HDAC2-AS2
+if(T){
+  cdk9.expression <- gene_expression_norm[c("CDK9"), samplesTP]
+  
+  HDACAS2 <- gene_expression_norm[c("HDAC2-AS2"), samplesTP]
+  
+  exp <- rbind(cdk9.expression, HDACAS2) #merge the expression
+  
+  ##change the sample, corresponds with clinical infor.
+  gexp <- exp
+  colnames(gexp) <-  sapply(strsplit(colnames(gexp),'-'),function(x) paste0(x[1:3],collapse="-"))
+  gexp <- t(gexp)
+  gexp <- as.data.frame(gexp)
+  gexp$submitter_id <- rownames(gexp)
+  
+  ##merge the expression and clinical data
+  clinical.exp <- merge(clinical, gexp, by = "submitter_id", all = T )
+  
+  df<-subset(clinical.exp,select =c(submitter_id,vital_status,days_to_last_follow_up,days_to_death,
+                                    cdk9.expression,  HDACAS2)) #377 patients remain
+  df <- df[!is.na(df$cdk9.expression),] ##remove NA
+  df <- df[!is.na(df$HDACAS2),] ##remove NA
+  
+  df$time <- df$days_to_death
+  df$time[which(is.na(df$time))] <- df$days_to_last_follow_up[which(is.na(df$time))]
+  df[is.na(df$time), "time"] <- 3675  
+
+#five-years
+  df[df$vital_status=='Dead',]$vital_status <- 2
+  df[df$vital_status=='Alive',]$vital_status <- 1
+  df[df$time >= 1825, ]$time <- 1825 
+  df[df$time == 1825,]$vital_status <- 1
+  
+  df$vital_status <- as.numeric(df$vital_status)
+  
+  df$cdk9.hl <- '' 
+  df[df$cdk9.expression >= mean(df$cdk9.expression),]$cdk9.hl <- "H"
+  df[df$cdk9.expression < mean(df$cdk9.expression),]$cdk9.hl <- "L"
+  
+  df$HDACAS2.hl <- '' 
+  df[df$HDACAS2 >= mean(df$HDACAS2),]$HDACAS2.hl <- "H"
+  df[df$HDACAS2 < mean(df$HDACAS2),]$HDACAS2.hl <- "L"
+  
+  df$com.exp <- ''
+  df[df$cdk9.hl == "H" & df$HDACAS2.hl =="H",]$com.exp <- "CDK9high HDAC2AS2high"
+  df[df$cdk9.hl == "L" & df$HDACAS2.hl =="H",]$com.exp <- "CDK9low HDAC2AS2high"
+  df[df$cdk9.hl == "L" & df$HDACAS2.hl =="L",]$com.exp <- "CDK9low HDAC2AS2low"
+  df[df$cdk9.hl == "H" & df$HDACAS2.hl =="L",]$com.exp <- "CDK9high HDAC2AS2low"
+}
+
+fit <- survfit(Surv(time, vital_status)~com.exp, data=df) 
+# P value
+
+surv_pvalue(fit)$pval.txt 
+# plot
+ggsurvplot(fit,pval=TRUE,font.legend = c(4,"black"))
+
+ggsave("./TCGA/CDK9HDACAS2-mean-TCGA_LIHC-survival-day1825.pdf", height = 4.5, width = 4.5)
+
+
+
+
+
+
+
+
