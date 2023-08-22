@@ -1,0 +1,178 @@
+rm(list = ls()) 
+Sys.setenv(R_MAX_NUM_DLLS=999)
+library(Seurat)
+library(ggplot2)
+library(Matrix)
+library(hdf5r)
+setwd("/Users/yanglab/Desktop/CDK9/HCC4-wang/")
+
+####HCC liver all cells####
+obj <- Read10X(data.dir = "./")
+
+obj <- CreateSeuratObject(counts = obj)
+#
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+obj <- subset(obj, subset = nFeature_RNA > 200 & percent.mt < 10)
+
+VlnPlot(obj, features = c('nFeature_RNA','nCount_RNA'), ncol =2)
+
+#add meta data
+sele <- obj@meta.data
+sele$Cell <- rownames(obj@meta.data)
+meta <- read.delim("GSE151530_Info.txt", header = TRUE, check.names = FALSE, encoding = "utf-8")
+sele2 <- merge(sele, meta, by = "Cell",all.x = TRUE, sort = F)
+obj2 <- obj
+obj2$cell.type <- sele2$Type
+obj2$S_ID <- sele2$S_ID
+obj2$Sample <- sele2$Sample
+
+obj <- obj2
+
+obj <- subset(obj, subset = cell.type != "unclassified")
+
+obj <- NormalizeData(obj, normalization.method = "LogNormalize", scale.factor = 10000)
+obj <- FindVariableFeatures(obj, selection.method = 'vst', nfeatures = 2000)
+obj <- ScaleData(obj)
+obj <- RunPCA(obj, features = VariableFeatures(object = obj))
+
+obj <- JackStraw(obj, num.replicate = 100)
+obj <- ScoreJackStraw(obj, dims = 1:15)
+JackStrawPlot(obj, dims = 1:15)
+ElbowPlot(obj)
+
+obj <- FindNeighbors(obj, dims = 1:15)
+obj <- FindClusters(obj, resolution = 0.3)
+obj <- RunUMAP(obj, dims = 1:15)
+
+color <- c("#000080",   "#FA8072", "#6495ED",'#800000', '#9ACD32', '#00BFFF', '#FF00FF', 
+           '#A52A2A', '#6B8E23', '#ADD8E6', '#C71585', '#FFEFD5',
+           '#DC143C', '#7FFF00', '#87CEFA', '#FF1493', '#DB7093',
+           '#FF6347', '#006400', '#000080', '#FFB6C1', 
+           '#CD5C5C', '#228B22', '#0000CD', '#FFE4C4',
+           '#E9967A', '#32CD32', '#4169E1', '#FFF8DC',
+           '#FFA07A', '#98FB98', '#4B0082', '#A9A9A9',
+           '#FF8C00', '#00FA9A','#6A5ACD', '#A0522D',
+           '#FFD700', '#20B2AA', '#9370DB', '#CD853F',
+           '#DAA520', '#008080', '#9400D3', '#BC8F8F',
+           '#BDB76B', '#00FFFF', '#BA55D3', '#708090',
+           '#808000', '#E0FFFF', '#DDA0DD', '#E6E6FA',
+           '#00FF7F', '#00BFFF', '#8A2BE2', '#DA70D6')
+pdf('./output/HCC.wang.umap.pdf', width = 6, height = 5)
+DimPlot(obj, reduction = "umap", cols = color, pt.size = 1)
+DimPlot(obj, reduction = "umap", cols = color, pt.size = 1, label = T)
+DimPlot(obj, reduction = "umap",group.by ="cell.type", cols = color, pt.size = 1,label = T)
+DimPlot(obj, reduction = "umap",group.by ="cell.type", cols = color, pt.size = 1)
+
+dev.off()
+
+gene_list <- c("CD3D","CD3E","CD4","CD8A","CDK9","IFNG","FGFBP2",'FCGR3A',"GZMB","CCL5","LAYN","LEF1","TCF7","GZMK",
+               "CXCL13","CCR7","IL7","IL7R","GZMA","MKI67","PDCD1",'HAVCR2',"SLC4A10",
+               "FOXP3","IL2","CTLA4","TIGIT",  #T cell
+               "CD79A","MS4A1","CD79B", #B cell
+               "CD68","CD14", #TAMs
+               "DCN","COL3A1","COL1A2", #CAFs
+               "VWF","ENG", #TECs
+               "PECAM1","ALB","TF","TTR", #Hepatocytes
+               "KRT19","CD24" ) 
+
+VlnPlot(obj, pt.size = 0, features = gene_list,cols = color)
+
+ggsave("./output/VlnPlot-markergene-Cluster.pdf", height = 30, width = 15)
+
+FeaturePlot(obj, reduction = 'umap', features = gene_list)
+ggsave("./output/UmapPlot-markergene-Cluster.pdf", height = 30, width = 12)
+
+VlnPlot(obj, pt.size = 0, features = gene_list, group.by = "cell.type",cols = color)
+
+ggsave("./output/VlnPlot-markergene-cell.type.pdf", height = 30, width = 15)
+
+saveRDS(obj, file = "HCC.wang.all.cell.RDS")
+
+###subset T cells####
+obj <- subset(obj, subset = cell.type == "T cells")
+
+obj <- NormalizeData(obj, normalization.method = "LogNormalize", scale.factor = 10000)
+obj <- FindVariableFeatures(obj, selection.method = 'vst', nfeatures = 2000)
+obj <- ScaleData(obj)
+obj <- RunPCA(obj, features = VariableFeatures(object = obj))
+
+obj <- JackStraw(obj, num.replicate = 100)
+obj <- ScoreJackStraw(obj, dims = 1:15)
+JackStrawPlot(obj, dims = 1:15)
+ElbowPlot(obj)
+
+obj <- FindNeighbors(obj, dims = 1:15)
+obj <- FindClusters(obj, resolution = 0.8)
+obj <- RunUMAP(obj, dims = 1:15)
+
+color <- c("#000080",   "#FA8072", "#6495ED",'#800000', '#9ACD32', '#00BFFF', '#FF00FF', 
+           '#A52A2A', '#6B8E23', '#ADD8E6', '#C71585', '#FFEFD5',
+           '#DC143C', '#7FFF00', '#87CEFA', '#FF1493', '#DB7093',
+           '#FF6347', '#006400', '#000080', '#FFB6C1', 
+           '#CD5C5C', '#228B22', '#0000CD', '#FFE4C4',
+           '#E9967A', '#32CD32', '#4169E1', '#FFF8DC',
+           '#FFA07A', '#98FB98', '#4B0082', '#A9A9A9',
+           '#FF8C00', '#00FA9A','#6A5ACD', '#A0522D',
+           '#FFD700', '#20B2AA', '#9370DB', '#CD853F',
+           '#DAA520', '#008080', '#9400D3', '#BC8F8F',
+           '#BDB76B', '#00FFFF', '#BA55D3', '#708090',
+           '#808000', '#E0FFFF', '#DDA0DD', '#E6E6FA',
+           '#00FF7F', '#00BFFF', '#8A2BE2', '#DA70D6')
+
+
+pdf('./output/Tcell-HCC.wang.umap.pdf', width = 6, height = 5)
+DimPlot(obj, reduction = "umap", cols = color, pt.size = 1)
+DimPlot(obj, reduction = "umap", cols = color, pt.size = 1, label = T)
+DimPlot(obj, reduction = "umap",group.by ="cell.type", cols = color, pt.size = 1,label = T)
+DimPlot(obj, reduction = "umap",group.by ="cell.type", cols = color, pt.size = 1)
+DimPlot(obj, reduction = "umap",group.by ="Sample", cols = color, pt.size = 1)
+DimPlot(obj, reduction = "umap",group.by ="time.point", cols = color, pt.size = 1)
+
+dev.off()
+
+gene_list <- c("CD3D","CD3E","CD4","CD8A","CDK9","IFNG","FGFBP2",'FCGR3A',"GZMB","CCL5","LAYN","LEF1","TCF7","GZMK",
+               "CXCL13","CCR7","IL7","IL7R","GZMA","MKI67","PDCD1",'HAVCR2',"SLC4A10","TOX",
+               "FOXP3","IL2","CTLA4","TIGIT")
+gene_list2 <- c("CD4","CD8A","CCR7","CD69","HSPA1A","IL7R","CXCL13","MKI67","GZMK","GZMH","GNLY","FOXP3","PDCD1","CD137","NCR3")
+VlnPlot(obj, pt.size = 0, features = gene_list,cols = color)
+VlnPlot(obj, pt.size = 0, features = gene_list2,cols = color)
+
+ggsave("./output/Tcell-VlnPlot-markergene-Cluster.pdf", height = 30, width = 15)
+ggsave("./output/Tcell-VlnPlot-markergene2-Cluster.pdf", height = 15, width = 15)
+
+FeaturePlot(obj, reduction = 'umap', features = gene_list)
+ggsave("./output/Tcell-UmapPlot-markergene-Cluster.pdf", height = 30, width = 12)
+
+VlnPlot(obj, pt.size = 0, features = gene_list, group.by = "cell.type",cols = color)
+
+ggsave("./output/Tcell-VlnPlot-markergene-cell.type.pdf", height = 30, width = 15)
+
+VlnPlot(obj, pt.size = 0, features = gene_list, group.by = "time.point",cols = color)
+ggsave("./output/Tcell-VlnPlot-markergene-time.point.pdf", height = 30, width = 15)
+
+saveRDS(obj, file = "HCC.wang.subT.cell.RDS")
+
+FeaturePlot(obj, features = c("CDK9","CD8A"), blend = T,  blend.threshold = 0)
+
+
+####find markers of T cell clusters
+obj.markers <- FindAllMarkers(obj, only.pos = T, min.pct = 0.25, logfc.threshold = 0.25, return.thresh = 0.05)
+obj.markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC) -> top5
+DoHeatmap(obj, features = top5$gene) + NoLegend()
+ggsave("./output/Tcell-top5gene_heatmap.pdf", width = 7, height = 10, units = "in")
+write.table(obj.markers,'./output/Tcell-markergene.csv',quote = TRUE, sep = ",",col.names = TRUE)
+
+## rename T cell clusters
+obj <- readRDS("HCC.wang.subT.cell.RDS")
+
+Idents(obj) <- obj$seurat_clusters
+obj <- RenameIdents(obj, `0` = "c8-CD4-TPT1", `1` = "c16-CD8-NCR3-IL7R", `2` = "c9-CD8-CCL4-GZMH", `3` = "c6-CD4-IL7R" , `4` = "c1-CD8-CD69",
+                     `5` = "c20-T-HSPA6", `6` = "c4-CD4-FOXP3-TNFRSF4", `7` = "c18-naïve T",`8` = "c14-CD8-JUND", `9` = "c2-CD4-CXCR4",
+                     `10` = "c15-CD8-MKI67", `11` = "c12-CD8-GNLY", `12` = "c11-CD8-FTH1", `13` = "c10-CD8-CD81",
+                    `14` = "c19-others", `15` = "c7-CD4-PLCG2",`16`="c5-CD4-IGFBP1",`17`="c13-CD8-IGFBP1",`18`="c3-CD4-FOXP3-LAYN",
+                    `19`="c17-CD8-PDCD1")
+obj$cell.type <-Idents(obj) ##add cell type to the metadata
+
+saveRDS(obj, file = "HCC.wang.subT.cell.RDS")
+
+
