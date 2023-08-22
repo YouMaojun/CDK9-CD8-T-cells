@@ -1,0 +1,52 @@
+rm(list = ls()) 
+Sys.setenv(R_MAX_NUM_DLLS=999)
+library(Seurat)
+library(ggplot2)
+library(Matrix)
+library(hdf5r)
+setwd("/Users/yanglab/Desktop/CDK9/HCC4-wang/")
+
+obj <- readRDS("HCC.wang.subT.cell.RDS")
+
+##assign cells CD4 or CD8 based on the CD4 and CD8A expression
+obj$CDK9 <- as.vector(obj@assays$RNA["CDK9",])
+obj$CD8A <- as.vector(obj@assays$RNA["CD8A",])
+obj$CD4 <- as.vector(obj@assays$RNA["CD4",])
+obj$CD48 <- NA
+obj$CD48[obj$CD8A/obj$CD4 > 3] <- "CD8 T"
+obj$CD48[obj$CD4/obj$CD8A > 3] <- "CD4 T"
+
+obj$CD48.CDK9 <- NA
+obj$CD48.CDK9 <- ifelse(obj$CDK9 > 0 & obj$CD48 == "CD8 T", "CD8+ CDK9+",
+                           ifelse(obj$CDK9 == 0 & obj$CD48 == "CD8 T", "CD8+ CDK9-",
+                                  ifelse(obj$CDK9 > 0 & obj$CD48 == "CD4 T", "CD4+ CDK9+",
+                                         ifelse(obj$CDK9 == 0 & obj$CD48 == "CD4 T", "CD4+ CDK9-", NA))))
+
+highlight <- rownames(obj@meta.data[obj@meta.data$CD48.CDK9 == "CD8+ CDK9+",])
+pdf('./output/Tcell-HCC.wang.umap.pdf', width = 7, height = 5)
+DimPlot(obj, reduction = "umap", group.by ="RNA_snn_res.0.8",cols = color, pt.size = 1)
+DimPlot(obj, reduction = "umap",  cells.highlight = highlight, pt.size = 1,cols.highlight = "red", sizes.highlight = 2)
+DimPlot(obj, reduction = "umap",group.by ="cell.type", cols = color, pt.size = 1)
+dev.off()
+
+#find markers for CDK9+ CD8 and CDK9- CD8 T cells
+Idents(obj) <-  factor(obj$CD48.CDK9)
+markers_CD8 <- FindMarkers(obj, ident.1 = "CD8+ CDK9+", ident.2 = "CD8+ CDK9-", min.pct = 0.25, test.use = "wilcox", logfc.threshold = 0.1)
+markers_CD4 <- FindMarkers(obj, ident.1 = "CD4+ CDK9+", ident.2 = "CD4+ CDK9-", min.pct = 0.25, test.use = "wilcox", logfc.threshold = 0.1)
+
+write.csv(markers_CD8, "./output/CDK9+CD8-markers.csv", quote = FALSE)
+write.csv(markers_CD4, "./output/CDK9+CD4-markers.csv", quote = FALSE)
+
+gene_list <- c("CDK9","IFI35","HAVCR2","PDCD1","GZMB","TOX","CTLA4","ICOS","PRF1","TIGIT",
+               "GNLY","JUND","STAT1","CD81","GZMK","LAG3")
+VlnPlot(obj, pt.size = 0, features = gene_list, group.by = "CD48.CDK9",cols = color)
+ggsave("./output/VlnPlot-markergene-CDK9+CD8 T.pdf", height = 20, width = 10)
+
+
+
+
+
+
+
+
+
